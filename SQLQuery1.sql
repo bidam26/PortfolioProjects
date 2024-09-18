@@ -1,91 +1,190 @@
---SELECT * 
---FROM PortfolioProject.dbo.CovidDatas
---ORDER BY 3,4
+SELECT *
+FROM PortfolioProject..data_cleaning_work
+WHERE country = 'Turkey'
 
---SELECT location, date, total_cases, new_cases, total_deaths, population
---FROM PortfolioProject..CovidDatas
---ORDER BY location, date
+-- 1) Remove duplicates if there any
+-- 2) Stardardize the data (if there is any issues about spelling etc.)
+-- 3) NULL and blank values
+-- 4) Remove any columns if necessary
 
--- Looking at Total Cases vs Total Deaths
--- That shows us that if you got Covid, we can see the percentage of the death senario
--- in your country.
+CREATE TABLE #temp_layoff(
+Company VARCHAR (50),
+Location VARCHAR (50),
+Industry VARCHAR (50),
+Total_Laid_Off FLOAT,
+Percentage_Laid_Off VARCHAR (50),
+Date DATETIME,
+Stage VARCHAR (50),
+Country VARCHAR (50),
+Funds_Raised_Millions FLOAT
+)
 
-SELECT location, date, total_cases, total_deaths, 
-CASE 
-	WHEN total_cases > 0 THEN (total_deaths /total_cases) * 100
-	ELSE '0'
-END AS Case_Death_Perc
-FROM PortfolioProject..CovidDatas
-WHERE location LIKE 'Turkey'
-ORDER BY location, date
+SELECT *
+FROM #temp_layoff
 
--- to see the percentage of the case in population in selected country
+INSERT #temp_layoff
+SELECT *
+FROM PortfolioProject..data_cleaning_work
 
-SELECT location, date, total_cases, population, 
-CASE 
-	WHEN total_cases > 0 THEN (total_cases/ population) * 100
-	ELSE '0'
-END AS Case_Popu_Perc
-FROM PortfolioProject..CovidDatas
-WHERE location LIKE 'Turkey'
-ORDER BY location, date
+-- -------------------------------------------------------------------------------------------
+-- Checking if is there any duplicates
+SELECT *,
+ROW_NUMBER ()
+OVER (PARTITION BY company, location, Industry, total_laid_off, percentage_laid_off ORDER BY company) AS Row_Num
+FROM #temp_layoff
 
--- looking at countries with highest infection rates 
+-- Here we checked if there any duplicates. If is there any, than Row_Num values must be > 1. 
+-- When I quickly checked, I saw a few 2. Now we are going to clear them.
+-- -------------------------------------------------------------------------------------------
 
-SELECT location, MAX(total_cases) AS Highest_Infection , population,
-MAX((total_cases/ population)) * 100 AS Popu_perc_Inf
-FROM PortfolioProject..CovidDatas
-GROUP BY location, population
-ORDER BY Popu_perc_Inf DESC
+WITH duplicate_cte AS
+(
+SELECT *,
+ROW_NUMBER ()
+OVER (PARTITION BY company, location, Industry, total_laid_off, percentage_laid_off ORDER BY company) AS Row_Num
+FROM #temp_layoff
+)
+SELECT *
+FROM duplicate_cte
+WHERE row_num > 1
+
+-- I Found the duplicates with this code. Now let's check a random company to see duplicates.
+
+SELECT *
+FROM #temp_layoff
+WHERE company = 'Oda'
+
+-- What I found here is, every column that I choose to figure out duplicates are not enough. 
+-- All the variables are same where I selected column names but Country and Fund_Raised_Millions 
+-- variables aren't same which means they aren't duplicate. Thus, I am going to check every column name in
+-- partition by statement.
+
+--------------------------------------------------------------------------------------------------------
+WITH duplicate_cte AS
+(
+SELECT *,
+ROW_NUMBER ()
+OVER (PARTITION BY company, location, Industry, total_laid_off, percentage_laid_off, 
+'date', stage, country, funds_raised_millions
+ORDER BY company) AS Row_Num
+FROM #temp_layoff
+)
+SELECT *
+FROM duplicate_cte
+WHERE row_num > 1
 
 
--- looking at countries with highest death count per population
+-- Now everything works well. I've checked some datas with writing WHERE company = 'company name'
+-- to see if there is any mistake. 
 
-SELECT location, MAX(total_deaths) AS Total_Death_Count
-FROM PortfolioProject..CovidDatas
-WHERE total_deaths IS NOT NULL
-GROUP BY location
-ORDER BY Total_Death_Count
+-----------------------------------------------------------------------------------------------------------
+WITH duplicate_cte AS
+(
+SELECT *,
+ROW_NUMBER ()
+OVER (PARTITION BY company, location, Industry, total_laid_off, percentage_laid_off, 
+'date', stage, country, funds_raised_millions
+ORDER BY company) AS Row_Num
+FROM #temp_layoff
+)
+DELETE 
+FROM duplicate_cte
+WHERE row_num > 1
 
--- looking at continents with highest death count per population
+-- With this code, I've deleted duplicates.
+-------------------------------------------------------------------------------------------------
+-- Now let's standardize the data.
 
-SELECT continent, MAX(total_deaths) AS Total_Death_Count
-FROM PortfolioProject..CovidDatas
-WHERE continent IS NOT NULL
-GROUP BY continent
-ORDER BY Total_Death_Count
+SELECT company, TRIM(company)
+FROM #temp_layoff
 
--- looking at global numbers
+-- deleted any spaces around letters.
 
-SELECT date, continent, SUM(CAST(new_cases AS INT)) AS Total_New_Cases_In_A_Day
---SUM(CAST(new_deaths AS INT)) AS Total_New_Cases_In_A_Day
-FROM PortfolioProject..CovidDatas
-WHERE continent IS NOT NULL
-GROUP BY date, continent
-ORDER BY date, continent
+UPDATE #temp_layoff
+SET Company = TRIM(company)
 
-SELECT date, new_cases, new_deaths
-FROM PortfolioProject.dbo.CovidDatas
-ORDER BY date
- 
- -- after searching for the problem of 0's, here is what I realize. Date datas are
- -- weekly datas. They are all written in Sundays. Thus why we cannot check daily
- -- cases and deaths. Let's check weekly datas.
+-------------------------------------------------------------------------------------------------
+SELECT DISTINCT Industry
+FROM #temp_layoff
+ORDER BY 1
 
-SELECT date, SUM(new_cases) AS Weekly_New_Cases,
-SUM(new_deaths) AS Weekly_New_Deaths,
-CASE 
-	WHEN SUM(new_deaths) / SUM (new_cases) * 100 > 100 THEN NULL
-	ELSE SUM(new_deaths) / SUM (new_cases) * 100
-END AS Death_Percentage
-FROM PortfolioProject..CovidDatas
-GROUP BY date
-HAVING SUM(new_cases) <> 0 AND SUM(new_deaths) <> 0
-ORDER BY date
+-- I have realized that there is one Cyrpto, Crypto Currency and CryptoCurrency values.
+-- They are exact same but due to they have written different, I need to fix it.
 
--- Looking at total population and vaccinations
+UPDATE #temp_layoff
+SET Industry = 'Crypto'
+WHERE Industry LIKE 'Crypto%'
 
-SELECT continent, location, date, population, new_vaccinations
-FROM PortfolioProject..CovidDatas
-WHERE continent IS NOT NULL
-ORDER BY date, continent, location
+SELECT *
+FROM #temp_layoff
+ORDER BY Industry
+
+-- With the code above, it is fixed.
+-----------------------------------------------------------------------------------------------
+--Now I am looking is there any country duplicates.
+
+SELECT DISTINCT country
+FROM #temp_layoff
+ORDER BY 1
+
+-- Here I found there are 'United States' and 'Unites States.' values. I need to fix that too.
+
+UPDATE #temp_layoff
+SET Country = 'United States'
+WHERE country LIKE 'United States%'
+
+-- Fixed with the code above.
+-------------------------------------------------------------------------------------------------
+-- Let's see NULL values
+
+SELECT *
+FROM #temp_layoff
+WHERE Industry IS NULL
+OR Industry = ''
+
+SELECT *
+FROM #temp_layoff
+WHERE company = 'Airbnb'
+ORDER BY Company
+
+-- Here What I catch. There is one Airbnb company which is located to the same area but 
+-- the thing is, on the second one industry missing. From here, I am guessing that 
+-- this is a Airbnb company and they are located to the same area, thus they must be in the 
+-- same industry which is travel. So here, I am fixing the NULL value with Travel.
+
+SELECT T1.Industry, T2.Industry
+FROM #temp_layoff T1
+JOIN #temp_layoff T2
+	ON t1.Company = T2.Company
+WHERE T1.Industry IS NULL
+AND T2.Industry IS NOT NULL
+
+UPDATE #temp_layoff
+JOIN #temp_layoff 
+	ON company = company
+SET Industry = Industry
+WHERE Industry IS NULL
+AND Industry IS NOT NULL
+
+
+-- JOIN PART DIDN'T WORKED. I need to SET them. OR don't touch them because I am just GUESSING 
+-- that it must be 'it'.
+
+-- Because I think this data isn't accurate or hard to trust, I prefer to DELETE them.
+
+SELECT *
+FROM #temp_layoff
+WHERE Total_Laid_Off IS NULL
+AND Percentage_Laid_Off = 'NULL'
+
+-- I have discovered something interesting here. When I deleted NULL values, there is only one row
+-- affected. But when I checked the data, there are tons of rows that are NULL. I have realized that
+-- Percentage_Laid_Off column is VARCHAR. So, it is written as 'NULL'. So I need to change this
+-- code just a little bit.
+
+DELETE 
+FROM #temp_layoff
+WHERE Total_Laid_Off IS NULL
+AND Percentage_Laid_Off = 'NULL'
+
+-- Now 348 row are affected.
